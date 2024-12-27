@@ -1,5 +1,8 @@
 import { create } from "zustand"
-import { createJSONStorage, persist } from "zustand/middleware"
+import {
+  createJSONStorage,
+  persist,
+} from "zustand/middleware"
 import { Client, Message } from "paho-mqtt"
 
 interface MessageHistory {
@@ -22,6 +25,7 @@ interface MQTTStore {
   messages: MessageHistory[]
   devices: Map<string, Device>
   isConnected: boolean
+  authenticated: boolean
   username?: string
   password?: string
   onlineUsers: string[]
@@ -33,162 +37,115 @@ interface MQTTStore {
   removeDevice: (id: string) => void
   addOnlineUser: (username: string) => void
   removeOnlineUser: (username: string) => void
-}
-
-// 从 localStorage 读取初始状态
-const getInitialState = () => {
-  try {
-    const savedState = localStorage.getItem("mqtt-storage")
-    if (savedState) {
-      const { state } = JSON.parse(savedState)
-      return {
-        username: state.username,
-        password: state.password,
-        isConnected: false, // 初始状态总是设为未连接
-        client: null,
-        messages: [],
-        devices: new Map(),
-        onlineUsers: [],
-      }
-    }
-  } catch (error) {
-    console.error("Failed to load persisted state:", error)
-  }
-
-  // 默认状态
-  return {
-    username: undefined,
-    password: undefined,
-    isConnected: false,
-    client: null,
-    messages: [],
-    devices: new Map(),
-    onlineUsers: [],
-  }
+  init: () => void
 }
 
 const useMQTTStore = create<MQTTStore>()(
   persist(
     (set, get) => ({
-      ...getInitialState(),
+      client: null,
+      messages: [],
+      devices: new Map(),
+      onlineUsers: [],
+      isConnected: false,
+      authenticated: false,
+      username: undefined,
+      password: undefined,
 
-      connect: async (username: string, password: string) => {
-        return new Promise((resolve, reject) => {
-          const clientId = `web_${username}_${Math.random()
-            .toString(36)
-            .substring(2, 10)}`
-          const mqttClient = new Client(
-            process.env.NEXT_PUBLIC_MQTT_HOST!,
-            Number(process.env.NEXT_PUBLIC_MQTT_PORT!),
-            clientId
-          )
+      init: () => {
+        const { username, password, authenticated } = get()
+        if (authenticated && username && password && !get().isConnected) {
+          get().connect(username, password)
+        }
+      },
 
-          mqttClient.onConnectionLost = () => {
-            set({ isConnected: false })
-          }
+      connect: (username: string, password: string) => {
+        const clientId = `web_${username}_${Math.random()
+          .toString(36)
+          .substring(2, 10)}`
+        const mqttClient = new Client(
+          process.env.NEXT_PUBLIC_MQTT_HOST!,
+          Number(process.env.NEXT_PUBLIC_MQTT_PORT!),
+          clientId
+        )
 
-          // 设置消息处理器
-          mqttClient.onMessageArrived = (message: Message) => {
-            const { destinationName: topic, payloadString } = message
+        mqttClient.onConnectionLost = () => {
+          set({ isConnected: false })
+        }
 
-            // 处理设备状态�����息
-            if (topic.startsWith("VinList/")) {
-              const [, sid, messageType] = topic.split("/")
+        mqttClient.onMessageArrived = (message: Message) => {
+          const { destinationName: topic, payloadString } = message
 
-              if (messageType === "online") {
-                if (payloadString === "offline" || payloadString === "\0") {
-                  get().removeDevice(sid)
-                } else {
-                  const vin = payloadString.split(",")[0]
-                  get().updateDevice(sid, {
-                    id: sid,
-                    vin,
-                    online: true,
-                    connected: true,
-                    connectedAt: new Date(),
-                  })
-                }
-              }
-
-              if (messageType === "locked") {
+          if (topic.startsWith("VinList/")) {
+            const [, sid, messageType] = topic.split("/")
+            if (messageType === "online") {
+              if (payloadString === "offline" || payloadString === "\0") {
+                get().removeDevice(sid)
+              } else {
+                const vin = payloadString.split(",")[0]
                 get().updateDevice(sid, {
-                  locked: payloadString,
+                  id: sid,
+                  vin,
+                  online: true,
+                  connected: true,
+                  connectedAt: new Date(),
                 })
               }
             }
-
-            // 处理用户在线状态
-            if (topic.startsWith("ClientList/online/")) {
-              const user = topic.split("/")[2]
-              if (payloadString === "yes") {
-                get().addOnlineUser(user)
-              } else {
-                get().removeOnlineUser(user)
-              }
+            if (messageType === "locked") {
+              get().updateDevice(sid, {
+                locked: payloadString,
+              })
             }
-
-            // 添加到消息历史
-            get().addMessage({
-              topic: message.destinationName,
-              payload: message.payloadString,
-              timestamp: new Date().toLocaleString(),
-            })
           }
 
-          mqttClient.connect({
-            userName: username,
-            password: password,
-            useSSL: false,
-            keepAliveInterval: 30,
-            cleanSession: true,
-            onSuccess: () => {
-              mqttClient.subscribe("#")
-              const message = new Message("yes")
-              message.destinationName = `ClientList/online/${username}`
-              message.retained = true
-              mqttClient.send(message)
+          if (topic.startsWith("ClientList/online/")) {
+            const user = topic.split("/")[2]
+            if (payloadString === "yes") {
+              get().addOnlineUser(user)
+            } else {
+              get().removeOnlineUser(user)
+            }
+          }
 
-              set({
-                client: mqttClient,
-                isConnected: true,
-                username,
-                password,
-              })
-              resolve()
-            },
-            onFailure: (err) => {
-              console.error("MQTT connection failed:", err)
-              set({
-                isConnected: false,
-                username: undefined,
-                password: undefined,
-              })
-              reject(
-                new Error(
-                  `连接失败 (${err.errorCode}): ${
-                    err.errorMessage || "请检查用户名和密码"
-                  }`
-                )
-              )
-            },
+          get().addMessage({
+            topic: message.destinationName,
+            payload: message.payloadString,
+            timestamp: new Date().toLocaleString(),
           })
-        })
-      },
+        }
 
-      reconnect: async () => {
-        const { username, password } = get()
-        if (username && password) {
-          try {
-            get().connect(username, password)
-          } catch (error) {
-            console.error("Reconnection failed:", error)
+        mqttClient.connect({
+          userName: username,
+          password: password,
+          useSSL: false,
+          keepAliveInterval: 30,
+          cleanSession: true,
+          onSuccess: () => {
+            mqttClient.subscribe("#")
+            const message = new Message("yes")
+            message.destinationName = `ClientList/online/${username}`
+            message.retained = true
+            mqttClient.send(message)
+
+            set({
+              client: mqttClient,
+              isConnected: true,
+              authenticated: true,
+              username,
+              password,
+            })
+          },
+          onFailure: (err) => {
+            console.error("MQTT connection failed:", err)
             set({
               isConnected: false,
+              authenticated: false,
               username: undefined,
               password: undefined,
             })
-          }
-        }
+          },
+        })
       },
 
       disconnect: () => {
@@ -203,11 +160,28 @@ const useMQTTStore = create<MQTTStore>()(
         set({
           client: null,
           isConnected: false,
+          authenticated: false,
           devices: new Map(),
           username: undefined,
           password: undefined,
           onlineUsers: [],
         })
+      },
+
+      reconnect: () => {
+        const { username, password } = get()
+        if (username && password) {
+          try {
+            get().connect(username, password)
+          } catch (error) {
+            console.error("Reconnection failed:", error)
+            set({
+              isConnected: false,
+              username: undefined,
+              password: undefined,
+            })
+          }
+        }
       },
 
       addMessage: (message: MessageHistory) => {
@@ -255,23 +229,15 @@ const useMQTTStore = create<MQTTStore>()(
       partialize: (state) => ({
         username: state.username,
         password: state.password,
-        isConnected: state.isConnected,
+        authenticated: state.authenticated,
       }),
+      onRehydrateStorage: () => (state) => {
+        if (state?.authenticated) {
+          useMQTTStore.getState().init()
+        }
+      },
     }
   )
 )
-
-// 初始化时尝试重连
-const initStore = () => {
-  const { username, password } = getInitialState()
-  if (username && password) {
-    useMQTTStore.getState().connect(username, password)
-  }
-}
-
-// 立即执行初始化
-if (typeof window !== "undefined") {
-  initStore()
-}
 
 export default useMQTTStore

@@ -1,11 +1,12 @@
 "use client"
 
+import { useMemo } from "react"
 import useMQTTStore from "@/stores/mqttStore"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 
 export default function MQTTdevice() {
   const { messages, isConnected } = useMQTTStore()
-  const lastMessage = messages[0]
+  const lastMessage = useMemo(() => messages[0], [messages])
 
   if (!isConnected) {
     return null

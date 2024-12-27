@@ -53,10 +53,18 @@ export default function DeviceList() {
                   </div>
                   <Badge
                     variant={
-                      device.locked === "free" ? "secondary" : "destructive"
+                      device.locked === "free" ? "success" : "destructive"
                     }
+                    className="flex items-center gap-1"
                   >
-                    {device.locked === "free" ? "空闲" : "占用"}
+                    {device.locked === "free" ? (
+                      "空闲"
+                    ) : (
+                      <>
+                        占用
+                        <span className="text-xs">({device.locked})</span>
+                      </>
+                    )}
                   </Badge>
                 </div>
               </SelectItem>
