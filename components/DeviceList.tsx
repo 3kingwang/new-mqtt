@@ -52,7 +52,9 @@ export default function DeviceList() {
                     </span>
                   </div>
                   <Badge
-                    variant={device.locked === "free" ? "secondary" : "warning"}
+                    variant={
+                      device.locked === "free" ? "secondary" : "destructive"
+                    }
                   >
                     {device.locked === "free" ? "空闲" : "占用"}
                   </Badge>
