@@ -1,13 +1,13 @@
 export interface ConnectedClient {
   id: string
   username: string
+  connected: boolean
+  connectedAt: Date
   lastMessage: {
     topic: string
     message: string
     timestamp: string
   } | null
-  connected: boolean
-  connectedAt: Date
 }
 
 export interface ConnectedDevice {

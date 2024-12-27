@@ -1,136 +1,72 @@
-import React, { useEffect, useState } from "react"
-import { mqttManager } from "../lib/mqttManager"
+"use client"
+import { useEffect } from "react"
+import { useRouter } from "next/navigation"
+import useMQTTStore from "@/stores/mqttStore"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
-interface Device {
-  sid: string
-  online: boolean
-  locked: string
-  vin: string
-  ecuList: string[]
-}
-
-const DeviceList: React.FC = () => {
-  const [devices, setDevices] = useState<Device[]>([])
-
-  const updateDeviceList = (newDevice: Device) => {
-    setDevices((prevDevices) => {
-      const existingDeviceIndex = prevDevices.findIndex(
-        (device) => device.sid === newDevice.sid
-      )
-      if (existingDeviceIndex !== -1) {
-        const updatedDevices = [...prevDevices]
-        updatedDevices[existingDeviceIndex] = newDevice
-        return updatedDevices
-      } else {
-        return [...prevDevices, newDevice]
-      }
-    })
-  }
-
-  const removeDevice = (sid: string) => {
-    setDevices((prevDevices) =>
-      prevDevices.filter((device) => device.sid !== sid)
-    )
-  }
+export default function DeviceList() {
+  const router = useRouter()
+  const { devices, isConnected } = useMQTTStore()
+  const onlineDevices = Array.from(devices.values()).filter(
+    (device) => device.online
+  )
 
   useEffect(() => {
-    const messageHandler = (topic: string, payload: Buffer) => {
-      console.log("Received message:", { topic, payload: payload.toString() })
-      if (topic.startsWith("VinList/")) {
-        const sid = topic.split("/")[1]
-        const messageType = topic.split("/")[2]
-        const newDevice: Device = {
-          sid,
-          online: false,
-          locked: "free",
-          vin: "",
-          ecuList: ["e400"],
-        }
-
-        if (
-          messageType === "online" &&
-          payload.toString() !== "\0" &&
-          payload.toString() !== "offline"
-        ) {
-          newDevice.online = true
-          newDevice.vin = payload.toString().split(",")[0]
-        }
-        if (
-          messageType === "online" &&
-          (payload.toString() === "offline" || payload.toString() === "\0")
-        ) {
-          removeDevice(sid)
-          return
-        }
-        if (messageType === "locked") {
-          newDevice.locked = payload.toString()
-        }
-        if (!newDevice.online) return
-        console.log("Updating device list with:", newDevice)
-        updateDeviceList(newDevice)
-      }
+    if (!isConnected) {
+      router.push("/login")
     }
+  }, [isConnected, router])
 
-    const handleConnect = () => {
-      console.log("MQTT connected, subscribing to messages")
-      mqttManager.subscribeToMessages(messageHandler)
-    }
-
-    mqttManager.on("connect", handleConnect)
-
-    return () => {
-      mqttManager.off("connect", handleConnect)
-      if (mqttManager.isConnected()) {
-        mqttManager.unsubscribeFromMessages(messageHandler)
-      }
-    }
-  }, [])
-
-  useEffect(() => {
-    const eventSource = new EventSource("/api/mqtt/events")
-
-    eventSource.onopen = () => {
-      console.log("SSE connection opened")
-    }
-
-    eventSource.onmessage = (event) => {
-      try {
-        console.log("Received SSE message:", event.data)
-        const devices = JSON.parse(event.data)
-        setDevices(devices)
-      } catch (error) {
-        console.error("Error parsing SSE message:", error)
-      }
-    }
-
-    eventSource.onerror = (error) => {
-      console.error("SSE error:", error)
-      eventSource.close()
-    }
-
-    return () => {
-      console.log("Closing SSE connection")
-      eventSource.close()
-    }
-  }, [])
+  if (!isConnected) {
+    return null
+  }
 
   return (
-    <div>
-      <h2>在线设备列表</h2>
-      <ul>
-        {devices
-          .filter((device) => device.online)
-          .map((device) => (
-            <li key={device.sid}>
-              <p>SID: {device.sid}</p>
-              <p>VIN: {device.vin}</p>
-              <p>锁定状态: {device.locked}</p>
-              <p>ECU 列表: {device.ecuList.join(", ")}</p>
-            </li>
-          ))}
-      </ul>
-    </div>
+    <Card>
+      <CardHeader>
+        <CardTitle>在线设备</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Select>
+          <SelectTrigger>
+            <SelectValue placeholder="选择设备" />
+          </SelectTrigger>
+          <SelectContent>
+            {onlineDevices.map((device) => (
+              <SelectItem key={device.id} value={device.id}>
+                <div className="flex items-center justify-between w-full">
+                  <div>
+                    <span className="font-medium">
+                      {device.vin || "未知车辆"}
+                    </span>
+                    <span className="text-sm text-muted-foreground ml-2">
+                      {device.id}
+                    </span>
+                  </div>
+                  <Badge
+                    variant={device.locked === "free" ? "secondary" : "warning"}
+                  >
+                    {device.locked === "free" ? "空闲" : "占用"}
+                  </Badge>
+                </div>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {onlineDevices.length === 0 && (
+          <p className="text-sm text-muted-foreground text-center mt-2">
+            暂无在线设备
+          </p>
+        )}
+      </CardContent>
+    </Card>
   )
 }
-
-export default DeviceList
